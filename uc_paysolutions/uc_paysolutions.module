@@ -1,0 +1,223 @@
+<?php
+// $Id: uc_paysolutions.module,v 1.6.2.6 2009/04/18 07:29:19 islandusurper Exp $
+
+/**
+ * @file
+ * Integrates thaiepay.com's redirected payment service.
+ */
+
+/**
+ * Implementation of hook_menu().
+ */
+function uc_paysolutions_menu() {
+  $items['cart/paysolutions/complete'] = array(
+    'title' => 'Order complete',
+    'page callback' => 'uc_paysolutions_complete',
+    'access callback' => 'uc_paysolutions_completion_access',
+    'type' => MENU_CALLBACK,
+    'file' => 'uc_paysolutions.pages.inc',
+  );
+  $items['cart/paysolutions/finalize'] = array(
+    'title' => 'Order complete',
+    'page callback' => 'uc_paysolutions_finalize',
+    'access callback' => 'uc_paysolutions_completion_access',
+    'type' => MENU_CALLBACK,
+    'file' => 'uc_paysolutions.pages.inc',
+  );
+  return $items;
+}
+
+// Make sure anyone can complete their paysolutions orders.
+function uc_paysolutions_completion_access() {
+  return TRUE;
+}
+
+/**
+ * Implementation of hook_ucga_display().
+ */
+function uc_paysolutions_ucga_display() {
+  // Tell UC Google Analytics to display the e-commerce JS on the custom
+  // order completion page for this module.
+  if (arg(0) == 'cart' && arg(1) == 'paysolutions' && arg(2) == 'complete') {
+    return TRUE;
+  }
+}
+
+/**
+ * Implementation of hook_form_alter().
+ */
+function uc_paysolutions_form_alter(&$form, &$form_state, $form_id) {
+  if ($form_id == 'uc_cart_checkout_review_form' && ($order_id = intval($_SESSION['cart_order'])) > 0) {
+    $order = uc_order_load($order_id);
+
+    if ($order->payment_method == 'paysolutions') {
+      unset($form['submit']);
+      $form['#prefix'] = '<table style="display: inline; padding-top: 1em;"><tr><td>';
+      $form['#suffix'] = '</td><td>'. drupal_get_form('uc_paysolutions_form', $order) .'</td></tr></table>';
+    }
+  }
+}
+
+/**
+ * Implementation of hook_payment_method().
+ */
+function uc_paysolutions_payment_method() {
+  $path = base_path() . drupal_get_path('module', 'uc_paysolutions');
+  $title = variable_get('uc_paysolutions_method_title', t('PAYSOLUTIONS -  is a simple credit card payment system:'));
+  $title .= '<br /><img src="'. $path .'/paysolutions_accept2.gif" style="position: relative; left: 2.5em;">';
+
+  $methods[] = array(
+    'id' => 'paysolutions',
+    'name' => t('paysolutions'),
+    'title' => $title,
+    'review' => variable_get('uc_paysolutions_check', FALSE) ? t('Credit card/eCheck') : t('Credit card'),
+    'desc' => t('Redirect to PAYSOLUTIONS to pay by credit card or eCheck.'),
+    'callback' => 'uc_payment_method_paysolutions',
+    'weight' => 3,
+    'checkout' => TRUE,
+    'no_gateway' => TRUE,
+  );
+
+  return $methods;
+}
+
+// Adds paysolutions settings to the payment method settings form.
+function uc_payment_method_paysolutions($op, &$arg1) {
+  switch ($op) {
+    case 'cart-details':
+      if (variable_get('uc_paysolutions_check', FALSE)) {
+        if ($_SESSION['pay_method'] == 'CK') {
+          $sel[2] = ' selected="selected"';
+        }
+        else {
+          $sel[1] = ' selected="selected"';
+        }
+        unset($_SESSION['pay_method']);
+        $details = '<div class="form-item"><b>'. t('Select your payment type:')
+                  .'</b> <select name="pay_method" class="form-select" id="edit-pay-method">'
+                  .'<option value="CC"'. $sel[1] .'>'. t('Credit card') .'</option>'
+                  .'<option value="CK"'. $sel[2] .'>'. t('Online check') .'</option></select></div>';
+      }
+      return $details;
+
+    case 'cart-process':
+      $_SESSION['pay_method'] = $_POST['pay_method'];
+      return;
+
+    case 'settings':
+      $form['uc_paysolutions_sid'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Merchantid with Paysolutions'),
+        '#description' => t('Your PAYSOLUTIONS vendor Merchantid number.'),
+        '#default_value' => variable_get('uc_paysolutions_sid', ''),
+        '#size' => 16,
+      );
+      $form['uc_paysolutions_secret_word'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Secret word for order verification'),
+        '#description' => t('The secret word entered in your PAYSOLUTIONS account Look and Feel settings.'),
+        '#default_value' => variable_get('uc_paysolutions_secret_word', 'tango'),
+        '#size' => 16,
+      );
+      $form['uc_paysolutions_demo'] = array(
+        '#type' => 'checkbox',
+        '#title' => t('Enable demo mode, allowing you to process fake orders for testing purposes.'),
+        '#default_value' => variable_get('uc_paysolutions_demo', TRUE),
+      );
+      $form['uc_paysolutions_language'] = array(
+        '#type' => 'select',
+        '#title' => t('Language preference'),
+        '#description' => t('Adjust language on PAYSOLUTIONS pages.'),
+        '#options' => array(
+          'en' => t('English'),
+          'sp' => t('Spanish'),
+        ),
+        '#default_value' => variable_get('uc_paysolutions_language', 'en'),
+      );
+      $form['uc_paysolutions_check'] = array(
+        '#type' => 'checkbox',
+        '#title' => t('Allow customers to choose to pay by credit card or online check.'),
+        '#default_value' => variable_get('uc_paysolutions_check', FALSE),
+      );
+      $form['uc_paysolutions_method_title'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Payment method title'),
+        '#default_value' => variable_get('uc_paysolutions_method_title', t('PAYSOLUTIONS - is a simple credit card payment system:')),
+      );
+      $form['uc_paysolutions_method_title_icons'] = array(
+        '#type' => 'checkbox',
+        '#title' => t('Show credit card icons beside the payment method title.'),
+        '#default_value' => variable_get('uc_paysolutions_method_title_icons', TRUE),
+      );
+      $form['uc_paysolutions_checkout_button'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Order review submit button text'),
+        '#description' => t('Provide PAYSOLUTIONS specific text for the submit button on the order review page.'),
+        '#default_value' => variable_get('uc_paysolutions_checkout_button', t('Submit Order')),
+      );
+      $form['uc_paysolutions_checkout_type'] = array(
+        '#type' => 'select',
+        '#title' => t('Paysolutions checkout type'),
+        '#description' => t('Single page checkout only works for stores selling intangible products using credit card payments.'),
+        '#options' => array(
+          'multi' => t('Multi-page checkout'),
+          'single' => t('Single page checkout'),
+        ),
+        '#default_value' => variable_get('uc_paysolutions_checkout_type', 'multi'),
+      );
+      return $form;
+  }
+}
+
+// Form to build the submission to thaiepay.com.
+function uc_paysolutions_form($form_state, $order) {
+  $country = uc_get_country_data(array('country_id' => $order->billing_country));
+  if ($country === FALSE) {
+    $country = array(0 => array('country_iso_code_3' => 'USA'));
+  }
+
+  $context = array(
+    'revision' => 'formatted-original',
+    'location' => 'paysolutions-form',
+  );
+  $options = array(
+    'sign' => FALSE,
+    'dec' => '.',
+    'thou' => FALSE,
+  );
+
+  $currency = variable_get('uc_currency_code', 'USD');
+  if ($currency == 'USD') {
+	$currencyCode = '840';
+  } else {
+	$currencyCode = '';
+  }
+
+  $data = array(
+    'merchantid' => '26504666', //Your Merchant 
+    'customeremail' => substr($order->primary_email, 0, 64),
+    'refno' => $order->order_id,
+    'productdetail' => 'Pay for products',
+    'total' => uc_price($order->order_total, $context, $options),
+    'paypal_amt' => uc_price($order->order_total, $context, $options),
+    'currencyCode' => $currencyCode, 
+    'postURL' => url('cart/paysolutions/finalize/', array('absolute' => TRUE)),
+  );
+
+  $form['#action'] = _paysolutions_post_url(variable_get('uc_paysolutions_checkout_type', 'multi'));
+
+  foreach ($data as $name => $value) {
+    $form[$name] = array('#type' => 'hidden', '#value' => $value);
+  }
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => variable_get('uc_paysolutions_checkout_button', t('Submit Order')),
+  );
+
+  return $form;
+}
+
+function _paysolutions_post_url($type) {
+  return 'https://www.thaiepay.com/epaylink/payment.aspx';
+}
